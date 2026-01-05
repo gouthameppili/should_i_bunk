@@ -1,7 +1,11 @@
+import torch
+torch.set_num_threads(1)
+
 from fastapi import FastAPI
 from app.core.config import settings
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.mongodb import connect_to_mongo, close_mongo_connection
+
 
 # Import Routes
 from app.api import auth_routes, ocr_routes, predict_routes, history_routes, timetable_routes

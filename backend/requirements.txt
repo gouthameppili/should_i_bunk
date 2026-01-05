@@ -1,12 +1,12 @@
 fastapi
-uvicorn
+uvicorn[standard]
 python-dotenv
 pymongo
 motor
 pydantic
 email-validator
 passlib[bcrypt]
-bcrypt==4.0.1
+bcrypt==3.2.2
 python-jose[cryptography]
 python-multipart
 scikit-learn

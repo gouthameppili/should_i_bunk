@@ -1,0 +1,27 @@
+# --- System ---
+.DS_Store
+Thumbs.db
+
+# --- Backend (Python) ---
+backend/venv/
+backend/__pycache__/
+*.pyc
+.env
+.pytest_cache/
+# NOTE: If your .pkl model is >100MB, we need Git LFS. 
+# If it's small, keep it. If huge, add it here.
+
+# --- Frontend (Node.js) ---
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.env.local
+frontend/.env.production
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# --- IDE Settings ---
+.vscode/
+.idea/

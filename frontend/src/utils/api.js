@@ -1,8 +1,9 @@
 import axios from 'axios';
 import Cookies from 'js-cookie';
 
-// Use the Environment Variable, or fallback to localhost only if missing
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+// Add the "/api/v1" suffix so all requests go to the right place
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const API_URL = `${BASE_URL}/api/v1`; 
 
 // ... rest of your axios code ...
 

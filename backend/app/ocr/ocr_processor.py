@@ -25,7 +25,8 @@ def extract_attendance_from_image(file_bytes: bytes):
         image = Image.open(BytesIO(file_bytes))
         
         # 3. Initialize Model (CORRECT NAME is 'gemini-1.5-flash')
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Use "gemini-1.5-flash-latest" which is safer and auto-resolves to the working version
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
         # 4. Prompt
         prompt = """

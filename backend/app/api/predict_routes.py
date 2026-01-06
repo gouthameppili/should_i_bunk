@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 router = APIRouter()
 
-# Setup Gemini (Uses the same key you already added)
+# Setup Gemini
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 class PredictionRequest(BaseModel):
@@ -21,9 +21,9 @@ class PredictionRequest(BaseModel):
     is_first_period: bool
     filename: str
 
-@router.post("/risk", status_code=200)
+# 👇 CHANGED: Set path to "/" to match your frontend request log
+@router.post("/", status_code=200)
 async def predict_risk(data: PredictionRequest):
-    # 1. Construct the prompt with all the variables
     prompt = f"""
     Act as a strict College Attendance Risk Analyzer AI. 
     Analyze the following student situation and calculate the risk of bunking this class.
@@ -53,19 +53,15 @@ async def predict_risk(data: PredictionRequest):
     """
 
     try:
-        # 2. Ask Gemini 2.0 Flash (Fast & Smart)
         model = genai.GenerativeModel('gemini-2.0-flash-exp')
         response = model.generate_content(prompt)
         
-        # 3. Clean and Parse Response
         clean_text = response.text.replace("```json", "").replace("```", "").strip()
         result = json.loads(clean_text)
-        
         return result
 
     except Exception as e:
         print(f"AI Prediction Error: {e}")
-        # Fallback to manual logic ONLY if AI fails (Safety Net)
         return {
             "prediction": "Not Safe ❌",
             "confidence": "50% (Fallback)",

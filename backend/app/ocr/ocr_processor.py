@@ -1,70 +1,71 @@
-import google.generativeai as genai
 import os
+import json
+import base64
 import re
-from io import BytesIO
-from PIL import Image
+from groq import Groq  # 👈 New Library
 
-# Setup API
-api_key = os.getenv("GEMINI_API_KEY")
-if api_key:
-    genai.configure(api_key=api_key)
+# Setup Groq Client
+api_key = os.getenv("GROQ_API_KEY")
+client = Groq(api_key=api_key) if api_key else None
 
 def extract_attendance_from_image(file_bytes: bytes):
     result_data = {"overall_attendance": 0.0, "subjects": [], "raw_text": ""}
 
+    if not client:
+        print("❌ Groq API Key missing! Check Environment Variables.")
+        return result_data
+
     try:
-        image = Image.open(BytesIO(file_bytes))
+        # 1. Convert Image to Base64 (Groq requires this format)
+        base64_image = base64.b64encode(file_bytes).decode('utf-8')
         
-        # Use Standard Flash (Reliable on Free Tier)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # 2. Ask Llama 3.2 Vision
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Extract the 'TOTAL' percentage from the bottom right of this table. Return ONLY the number (e.g. 92.16). Do not write sentences."},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}",
+                            },
+                        },
+                    ],
+                }
+            ],
+            model="llama-3.2-11b-vision-preview", # 👈 The Vision Model
+            temperature=0, # Be precise, not creative
+        )
 
-        # 1. Ask for a simple text dump
-        prompt = "Read all the text in this image. Return it as plain text. Do not format it."
+        # 3. Get the Response
+        content = chat_completion.choices[0].message.content
+        print(f"🦙 Llama Output: {content}")
         
-        response = model.generate_content([prompt, image])
-        text = response.text
+        # 4. Extract the Number (Robust Regex)
+        # Finds the last number in the response that contains a decimal
+        # Matches: 92.16, 85.5, etc.
+        matches = re.findall(r"(\d+\.\d+)", content)
         
-        # 🟢 DEBUGGING: This will print EXACTLY what Gemini sees to your Render logs
-        print(f"\n🔍 GEMINI SAW THIS:\n{text}\n")
-        
-        # 🟢 STRATEGY: The "Decimal Hunter"
-        # 1. Find where "TOTAL" starts
-        total_index = text.upper().find("TOTAL")
-        
-        if total_index != -1:
-            # 2. Slice the text to only look ATFER "TOTAL"
-            text_after_total = text[total_index:]
-            
-            # 3. Find all decimal numbers (e.g., 92.16, 85.5) in that chunk
-            # The regex matches numbers that HAVE a dot
-            decimal_matches = re.findall(r"\b\d+\.\d+\b", text_after_total)
-            
-            if decimal_matches:
-                # The first decimal after "TOTAL" is usually the percentage
-                percent = float(decimal_matches[0])
-                
-                # Sanity check: Percentage must be 0-100
-                if 0 <= percent <= 100:
-                    print(f"✅ FOUND PERCENTAGE: {percent}")
-                    return {"overall_attendance": percent, "subjects": [], "raw_text": text}
+        if matches:
+            # Usually the percentage is the last number mentioned or the only one
+            percent = float(matches[-1])
+            if 0 <= percent <= 100:
+                result_data["overall_attendance"] = percent
+                result_data["raw_text"] = content
+                return result_data
 
-        # 🔴 FALLBACK: If "TOTAL" is missing, just hunt for the highest decimal number in the whole text
-        # (This helps if Gemini misses the word "TOTAL")
-        all_decimals = re.findall(r"\b\d+\.\d+\b", text)
-        valid_percentages = [float(x) for x in all_decimals if 50 <= float(x) <= 100]
-        
-        if valid_percentages:
-            # Take the largest value (assuming attendance is the main metric)
-            best_guess = max(valid_percentages)
-            print(f"⚠️ GUESSED PERCENTAGE: {best_guess}")
-            return {"overall_attendance": best_guess, "subjects": [], "raw_text": text}
+        # Fallback for Integers (if attendance is exactly 92%)
+        int_matches = re.findall(r"(\d+)", content)
+        if int_matches:
+             # Filter logic: Attendance is usually > 50 and <= 100
+             valid_ints = [int(x) for x in int_matches if 50 <= int(x) <= 100]
+             if valid_ints:
+                 result_data["overall_attendance"] = float(valid_ints[-1])
 
-        print("❌ NO PERCENTAGE FOUND")
         return result_data
 
     except Exception as e:
-        print(f"🔥 OCR Error: {str(e)}")
-        # If rate limited, tell the frontend
-        if "429" in str(e):
-             return {"overall_attendance": 0.0, "error": "Server Busy (Rate Limit)"}
+        print(f"🔥 Llama OCR Error: {str(e)}")
         return result_data

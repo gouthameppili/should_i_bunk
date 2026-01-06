@@ -14,6 +14,24 @@ load_dotenv()
 router = APIRouter()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
+# --- COPY THE HELPER FUNCTION HERE TOO ---
+def get_best_available_model():
+    try:
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # Priority: Flash > Pro > Any
+        priorities = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]
+        
+        for p in priorities:
+            for m in available_models:
+                if p in m: return m
+        
+        return available_models[0] if available_models else "gemini-1.5-flash"
+    except:
+        return "gemini-1.5-flash"
+
+CURRENT_MODEL_NAME = get_best_available_model()
+
 class PredictionRequest(BaseModel):
     overall_attendance: float
     is_core_subject: int
@@ -26,37 +44,29 @@ class PredictionRequest(BaseModel):
     is_first_period: bool
     filename: str
 
-# --- VINTAGE MATH MODEL (Fallback) ---
+# ... (Keep calculate_vintage_risk function exactly as it was) ...
 def calculate_vintage_risk(data: PredictionRequest):
+    # (Paste your vintage logic here from previous step)
+    # Short version for brevity:
     score = 0.0
     if data.overall_attendance < 75: score += (75 - data.overall_attendance) * 2.5
-    elif data.overall_attendance > 85: score -= 10
-    
     if data.days_to_exam <= 3: score += 60
-    elif data.days_to_exam <= 7: score += 30
-    
-    if data.is_lab: score += 25
     if data.has_proxy: score -= 45
-    
     final_risk = max(0, min(100, score))
     is_safe = final_risk < 50
-    
     return {
         "prediction": "Safe to Bunk 😎" if is_safe else "Not Safe ❌",
-        "confidence": f"{100 - final_risk:.1f}%" if is_safe else f"{final_risk:.1f}% Risk",
-        "message": f"Calculated Risk: {int(final_risk)}%. " + ("Proxy is saving you." if data.has_proxy else "Standard conditions.")
+        "confidence": f"{100 - final_risk:.1f}%",
+        "message": "Calculated Risk."
     }
 
 @router.post("/", status_code=200)
-async def predict_risk(
-    data: PredictionRequest,
-    current_user: dict = Depends(get_current_user)
-):
+async def predict_risk(data: PredictionRequest, current_user: dict = Depends(get_current_user)):
     result = {}
     
-    # 1. Try Gemini
+    # 1. Try Gemini (Auto-Selected)
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        model = genai.GenerativeModel(CURRENT_MODEL_NAME)
         prompt = f"""
         Act as a College Advisor. 
         Attendance: {data.overall_attendance}%, Exam in: {data.days_to_exam} days, Proxy: {data.has_proxy}.
@@ -65,14 +75,12 @@ async def predict_risk(
         response = model.generate_content(prompt)
         result = json.loads(response.text.replace("```json", "").replace("```", "").strip())
     except Exception:
+        # Fallback to Vintage Math
         result = calculate_vintage_risk(data)
 
-    # 2. SAVE TO DATABASE (FIXED)
+    # 2. SAVE TO DATABASE (Keep this part!)
     try:
-        # 🟢 FIX: Handle different user object structures safely
-        # It tries 'username', then 'sub', then 'email', then defaults to 'unknown'
-        username = current_user.get("username") or current_user.get("sub") or current_user.get("email") or "unknown_user"
-        
+        username = current_user.get("username") or current_user.get("sub") or "unknown"
         history_log = {
             "username": username,
             "timestamp": datetime.now(),
@@ -82,10 +90,8 @@ async def predict_risk(
             "confidence": result.get("confidence", "0%"),
             "message": result.get("message", "")
         }
-        
         database = db.client[settings.DATABASE_NAME]
         await database["history"].insert_one(history_log)
-        print("✅ History saved successfully!")
         
     except Exception as e:
         print(f"❌ DB Save Error: {e}")

@@ -5,9 +5,9 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from datetime import datetime
-from app.db.mongodb import db  # 👈 Added DB import
+from app.db.mongodb import db
 from app.core.config import settings
-from app.core.security import get_current_user # 👈 Added Auth to identify who to save history for
+from app.core.security import get_current_user
 
 load_dotenv()
 
@@ -26,7 +26,7 @@ class PredictionRequest(BaseModel):
     is_first_period: bool
     filename: str
 
-# --- VINTAGE MATH MODEL (Reliable Fallback) ---
+# --- VINTAGE MATH MODEL (Fallback) ---
 def calculate_vintage_risk(data: PredictionRequest):
     score = 0.0
     if data.overall_attendance < 75: score += (75 - data.overall_attendance) * 2.5
@@ -34,72 +34,60 @@ def calculate_vintage_risk(data: PredictionRequest):
     
     if data.days_to_exam <= 3: score += 60
     elif data.days_to_exam <= 7: score += 30
-    elif data.days_to_exam > 30: score -= 15
-
-    if data.is_core_subject: score += 15
-    if data.faculty_strictness == 3: score += 20
-    if data.faculty_strictness == 1: score -= 10
     
     if data.is_lab: score += 25
-    if data.bunked_last_class: score += 15
     if data.has_proxy: score -= 45
-    if data.is_first_period: score -= 10
-
+    
     final_risk = max(0, min(100, score))
     is_safe = final_risk < 50
-    
-    reasons = []
-    if data.days_to_exam < 5: reasons.append("Exams are too close")
-    if data.overall_attendance < 75: reasons.append("Low attendance")
-    if data.is_lab: reasons.append("Lab session")
-    if data.has_proxy: reasons.append("Proxy saved you")
     
     return {
         "prediction": "Safe to Bunk 😎" if is_safe else "Not Safe ❌",
         "confidence": f"{100 - final_risk:.1f}%" if is_safe else f"{final_risk:.1f}% Risk",
-        "message": f"Risk Level: {int(final_risk)}%. " + (", ".join(reasons) if reasons else "Conditions are standard.")
+        "message": f"Calculated Risk: {int(final_risk)}%. " + ("Proxy is saving you." if data.has_proxy else "Standard conditions.")
     }
 
 @router.post("/", status_code=200)
 async def predict_risk(
     data: PredictionRequest,
-    current_user: dict = Depends(get_current_user) # 👈 Require User Login to save history
+    current_user: dict = Depends(get_current_user)
 ):
     result = {}
     
     # 1. Try Gemini
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
         prompt = f"""
-        Act as a College Advisor. Analyze:
-        Attendance: {data.overall_attendance}%, Exam in: {data.days_to_exam} days, 
-        Strictness: {data.faculty_strictness}/3, Lab: {data.is_lab}, Proxy: {data.has_proxy}.
-        
-        Return JSON ONLY:
-        {{ "prediction": "Safe to Bunk 😎" or "Not Safe ❌", "confidence": "85%", "message": "Short witty reason." }}
+        Act as a College Advisor. 
+        Attendance: {data.overall_attendance}%, Exam in: {data.days_to_exam} days, Proxy: {data.has_proxy}.
+        Return JSON: {{ "prediction": "Safe/Not Safe", "confidence": "85%", "message": "Short reason" }}
         """
         response = model.generate_content(prompt)
-        clean_text = response.text.replace("```json", "").replace("```", "").strip()
-        result = json.loads(clean_text)
-    except Exception as e:
-        print(f"⚠️ AI Switch: {e}")
+        result = json.loads(response.text.replace("```json", "").replace("```", "").strip())
+    except Exception:
         result = calculate_vintage_risk(data)
 
-    # 2. SAVE TO DATABASE (The Missing Link!) 💾
+    # 2. SAVE TO DATABASE (FIXED)
     try:
+        # 🟢 FIX: Handle different user object structures safely
+        # It tries 'username', then 'sub', then 'email', then defaults to 'unknown'
+        username = current_user.get("username") or current_user.get("sub") or current_user.get("email") or "unknown_user"
+        
         history_log = {
-            "username": current_user["username"],
+            "username": username,
             "timestamp": datetime.now(),
             "overall_attendance": data.overall_attendance,
             "filename": data.filename,
-            "prediction": result["prediction"],
-            "confidence": result["confidence"],
-            "message": result["message"]
+            "prediction": result.get("prediction", "Unknown"),
+            "confidence": result.get("confidence", "0%"),
+            "message": result.get("message", "")
         }
+        
         database = db.client[settings.DATABASE_NAME]
         await database["history"].insert_one(history_log)
-        print("✅ History saved to DB")
+        print("✅ History saved successfully!")
+        
     except Exception as e:
-        print(f"❌ Failed to save history: {e}")
+        print(f"❌ DB Save Error: {e}")
 
     return result

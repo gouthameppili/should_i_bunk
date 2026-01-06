@@ -1,63 +1,49 @@
-import easyocr
-import numpy as np
-import cv2
+import google.generativeai as genai
+import os
 from io import BytesIO
 from PIL import Image
+from app.core.config import settings
 
-# --- LAZY LOADING SETUP ---
-# We do NOT initialize the reader here. We set it to None.
-reader_instance = None
-
-def get_reader():
-    """
-    Only loads the heavy AI model when absolutely necessary.
-    """
-    global reader_instance
-    if reader_instance is None:
-        print("🐢 Loading OCR Model for the first time... (This might be slow)")
-        # gpu=False is CRITICAL for Render Free Tier
-        reader_instance = easyocr.Reader(['en'], gpu=False, verbose=False)
-    return reader_instance
+# Configure the API
+# We will grab the key from settings/env
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 def extract_attendance_from_image(file_bytes: bytes):
-    # 1. Convert bytes to image
-    image = Image.open(BytesIO(file_bytes))
-    image_np = np.array(image)
+    try:
+        # 1. Load image from bytes
+        image = Image.open(BytesIO(file_bytes))
 
-    # 2. Get the Reader (Loads model now if not loaded yet)
-    reader = get_reader()
+        # 2. Initialize Gemini Model (Lightweight 1.5 Flash)
+        model = genai.GenerativeModel('gemini-1.5-flash')
 
-    # 3. Perform Text Extraction
-    results = reader.readtext(image_np)
-    
-    # 4. Process Results (Your existing logic)
-    text_lines = []
-    for (bbox, text, prob) in results:
-        if prob > 0.3:
-            text_lines.append(text.lower())
-            
-    full_text = " ".join(text_lines)
-    
-    # --- YOUR LOGIC TO EXTRACT NUMBERS ---
-    import re
-    # Find all percentages (e.g., "85.5", "90")
-    numbers = re.findall(r"(\d+(?:\.\d+)?)", full_text)
-    
-    valid_attendance = []
-    for num in numbers:
-        try:
-            val = float(num)
-            if 0 <= val <= 100:
-                valid_attendance.append(val)
-        except:
-            continue
-            
-    # Simple Heuristic: The Overall attendance is usually the last or one of the numbers found
-    # If we found nothing, return 0
-    overall = valid_attendance[-1] if valid_attendance else 0.0
-    
-    return {
-        "raw_text": full_text[:100] + "...", 
-        "overall_attendance": overall,
-        "subjects": valid_attendance
-    }
+        # 3. The Prompt - We ask Gemini to do the hard work
+        prompt = """
+        Analyze this image of an attendance record. 
+        Extract the following:
+        1. The Overall Attendance percentage (look for "Total", "Overall", or the main percentage).
+        2. A list of subject attendance percentages.
+        
+        Return ONLY a JSON string like this:
+        {"overall_attendance": 85.5, "subjects": [80.0, 90.0, 75.5], "raw_text": "Summary of text..."}
+        """
+
+        # 4. Generate Content
+        response = model.generate_content([prompt, image])
+        
+        # 5. Parse the result (Simple cleaning)
+        # Gemini sometimes puts ```json ... ``` blocks, we clean them
+        text_response = response.text.replace("```json", "").replace("```", "").strip()
+        
+        import json
+        data = json.loads(text_response)
+        
+        return data
+
+    except Exception as e:
+        print(f"Gemini Error: {e}")
+        # Fallback if AI fails
+        return {
+            "raw_text": "Error processing image",
+            "overall_attendance": 0.0,
+            "subjects": []
+        }

@@ -4,8 +4,9 @@ torch.set_num_threads(1)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-# 👇 THIS LINE WAS MISSING
-from app.db.database import connect_to_mongo, close_mongo_connection 
+
+# 👇 CHANGED THIS LINE: Point to 'app.db.mongodb' instead of 'database'
+from app.db.mongodb import connect_to_mongo, close_mongo_connection 
 
 from app.api import auth_routes, ocr_routes, history_routes, timetable_routes 
 # from app.api import predict_routes  <-- Keep commented out
@@ -21,7 +22,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- 👇 THESE EVENTS WERE MISSING. ADD THEM BACK! ---
+# --- Database Events ---
 @app.on_event("startup")
 async def startup_db_client():
     await connect_to_mongo()
@@ -29,7 +30,6 @@ async def startup_db_client():
 @app.on_event("shutdown")
 async def shutdown_db_client():
     await close_mongo_connection()
-# ----------------------------------------------------
 
 # --- Routes ---
 app.include_router(auth_routes.router, prefix="/api/v1/auth", tags=["Auth"])

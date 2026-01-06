@@ -1,22 +1,17 @@
 import torch
-torch.set_num_threads(1)
+torch.set_num_threads(1) # Keep this!
 
 from fastapi import FastAPI
-from app.core.config import settings
 from fastapi.middleware.cors import CORSMiddleware
-from app.db.mongodb import connect_to_mongo, close_mongo_connection
+from app.core.config import settings
 
-
-# Import Routes
-from app.api import auth_routes, ocr_routes, predict_routes, history_routes, timetable_routes
+# 1. REMOVE or COMMENT OUT 'predict_routes' here:
+from app.api import auth_routes, ocr_routes, history_routes, timetable_routes 
+# from app.api import predict_routes  <-- COMMENTED OUT
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
-origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
-
+# ... CORS Middleware Setup (Keep this unchanged) ...
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,17 +20,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# DB Events
-app.add_event_handler("startup", connect_to_mongo)
-app.add_event_handler("shutdown", close_mongo_connection)
-
-# Register Routers
-app.include_router(auth_routes.router, prefix="/api/v1/auth", tags=["Authentication"])
-app.include_router(predict_routes.router, prefix="/api/v1/predict", tags=["Prediction"])
-app.include_router(timetable_routes.router, prefix="/api/v1/timetable", tags=["Timetable"])
+# 2. Include Routers (Keep others, comment out predict)
+app.include_router(auth_routes.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(ocr_routes.router, prefix="/api/v1/ocr", tags=["OCR"])
 app.include_router(history_routes.router, prefix="/api/v1/history", tags=["History"])
+app.include_router(timetable_routes.router, prefix="/api/v1/timetable", tags=["Timetable"])
+
+# app.include_router(predict_routes.router, prefix="/api/v1/predict", tags=["Prediction"]) <-- COMMENTED OUT
 
 @app.get("/")
-async def root():
-    return {"message": "Welcome to Should I Bunk? API", "status": "active"}
+def read_root():
+    return {"message": "Welcome to Should I Bunk API"}

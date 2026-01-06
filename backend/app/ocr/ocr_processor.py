@@ -1,6 +1,6 @@
 import google.generativeai as genai
 import os
-import re  # 👈 Added Regex for manual extraction
+import re
 import json
 import time
 from io import BytesIO
@@ -15,42 +15,47 @@ def extract_attendance_from_image(file_bytes: bytes):
 
     try:
         image = Image.open(BytesIO(file_bytes))
-        
-        # Use Standard Flash (Reliable)
         model = genai.GenerativeModel('gemini-1.5-flash')
 
-        # 🟢 STRATEGY CHANGE: Ask for raw text of the bottom row, not JSON
-        prompt = """
-        Look at the bottom of this table.
-        Find the row that starts with "TOTAL".
-        Write down the exact text of that entire row.
-        Then, identify the final percentage number in that row.
+        # 🟢 STRATEGY: Simple text dump. Don't ask for JSON.
+        prompt = "Read all the text in this image. Return it as plain text."
         
-        Return the result in this exact format:
-        Row: [text of the row]
-        Percentage: [number]
-        """
-        
-        time.sleep(1) # Safety buffer
+        time.sleep(1)
         response = model.generate_content([prompt, image])
         text = response.text
         
-        print(f"🔍 Gemini Raw Output: {text}") # Check logs to see what it sees!
+        # Log what Gemini actually sees (Check your Render logs for this!)
+        print(f"🔍 RAW OCR OUTPUT:\n{text}")
 
-        # 🟢 MANUAL EXTRACTION (Regex)
-        # We look for a number (like 92.16 or 85.00) specifically near "Percentage:" or at end of string
-        match = re.search(r"Percentage:\s*([\d\.]+)", text)
-        if match:
-            percent = float(match.group(1))
-            return {"overall_attendance": percent, "subjects": [], "raw_text": text}
+        # 🟢 LOGIC 1: Look for the specific "TOTAL" row pattern
+        # Matches "TOTAL", then some numbers, then ends with a decimal number
+        # Example: "TOTAL 102 94 92.16"
+        total_lines = [line for line in text.split('\n') if "TOTAL" in line.upper()]
         
-        # Fallback: Search for any number after "TOTAL"
-        # Matches "TOTAL 102 94 92.16" -> grabs 92.16
-        fallback_match = re.search(r"TOTAL.*?([\d\.]+)\s*$", text.replace("\n", " ").strip())
-        if fallback_match:
-             percent = float(fallback_match.group(1))
-             return {"overall_attendance": percent, "subjects": [], "raw_text": text}
+        for line in total_lines:
+            # Remove symbols like '|' or '%'
+            clean_line = line.replace('|', '').replace('%', '').strip()
+            # Find all numbers in that line (e.g. ['102', '94', '92.16'])
+            numbers = re.findall(r"[\d\.]+", clean_line)
+            
+            if numbers:
+                # The percentage is usually the LAST number
+                try:
+                    percent = float(numbers[-1])
+                    # Sanity check: Attendance is usually between 0 and 100
+                    if 0 <= percent <= 100:
+                        return {"overall_attendance": percent, "subjects": [], "raw_text": text}
+                except:
+                    continue
 
+        # 🟢 LOGIC 2: Fallback - Look for "Overall" or "%" explicitly
+        # Matches "92.16 %" or "92.16%"
+        percent_match = re.search(r"(\d+\.?\d*)\s*%", text)
+        if percent_match:
+             return {"overall_attendance": float(percent_match.group(1)), "subjects": [], "raw_text": text}
+
+        # If we failed, return raw text so we can see it in the UI
+        result_data["raw_text"] = text
         return result_data
 
     except Exception as e:

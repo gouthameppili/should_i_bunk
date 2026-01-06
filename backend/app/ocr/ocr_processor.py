@@ -14,7 +14,7 @@ def extract_attendance_from_image(file_bytes: bytes):
         image = Image.open(BytesIO(file_bytes))
 
         # 2. Initialize Gemini Model (Lightweight 1.5 Flash)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
 
         # 3. The Prompt - We ask Gemini to do the hard work
         prompt = """

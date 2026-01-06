@@ -6,6 +6,7 @@ from app.core.config import settings
 from app.db.mongodb import db
 from app.models.user import UserCreate
 
+
 router = APIRouter()
 
 @router.post("/signup", status_code=status.HTTP_201_CREATED)

@@ -260,7 +260,20 @@ export default function Dashboard() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-xs font-bold text-slate-500 uppercase mb-2 block">Days to Exam</label>
-                    <input type="number" className="w-full bg-white/5 border border-white/10 rounded-xl py-3 px-4 text-white focus:border-cyan-500 outline-none" value={popupData.daysToExam} onChange={(e) => setPopupData({...popupData, daysToExam: e.target.value})}/>
+                    {/* OLD: <input type="number" ... /> */}
+
+{/* NEW: Input that blocks negative numbers */}
+                    <input 
+                      type="number" 
+                      min="0" 
+                      className="w-full bg-white/5 border border-white/10 rounded-xl py-3 px-4 text-white focus:border-cyan-500 outline-none" 
+                      value={popupData.daysToExam} 
+                      onChange={(e) => {
+                        // 🛡️ LOGIC: Force value to be at least 0
+                        const val = parseInt(e.target.value);
+                        setPopupData({...popupData, daysToExam: val < 0 ? 0 : val}) 
+                      }}
+                    />
                   </div>
                   <div>
                     <label className="text-xs font-bold text-slate-500 uppercase mb-2 block">Strictness</label>

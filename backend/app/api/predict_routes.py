@@ -14,19 +14,11 @@ load_dotenv()
 router = APIRouter()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-# --- COPY THE HELPER FUNCTION HERE TOO ---
+# --- HELPER: AUTO-SELECT MODEL ---
 def get_best_available_model():
     try:
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        # Priority: Flash > Pro > Any
-        priorities = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]
-        
-        for p in priorities:
-            for m in available_models:
-                if p in m: return m
-        
-        return available_models[0] if available_models else "gemini-1.5-flash"
+        # Just use Flash. It is the most reliable for free tier rate limits.
+        return "gemini-1.5-flash"
     except:
         return "gemini-1.5-flash"
 
@@ -44,27 +36,61 @@ class PredictionRequest(BaseModel):
     is_first_period: bool
     filename: str
 
-# ... (Keep calculate_vintage_risk function exactly as it was) ...
+# --- VINTAGE MATH MODEL (CORRECTED LOGIC) ---
 def calculate_vintage_risk(data: PredictionRequest):
-    # (Paste your vintage logic here from previous step)
-    # Short version for brevity:
+    # 1. Sanitize Inputs (No negative days)
+    if data.days_to_exam < 0:
+        data.days_to_exam = 0
+
+    # 2. Initialize Score ONCE
     score = 0.0
-    if data.overall_attendance < 75: score += (75 - data.overall_attendance) * 2.5
-    if data.days_to_exam <= 3: score += 60
+
+    # 3. Attendance Impact (The Foundation)
+    if data.overall_attendance < 75: 
+        score += (75 - data.overall_attendance) * 2.5
+    elif data.overall_attendance > 85: 
+        score -= 10
+
+    # 4. Exam Panic (Cumulative)
+    if data.days_to_exam <= 3: 
+        score += 60
+    elif data.days_to_exam <= 7: 
+        score += 30
+    
+    # 5. Contextual Weights
+    if data.is_lab: score += 25
+    if data.faculty_strictness == 3: score += 20
+    if data.faculty_strictness == 1: score -= 10
+    if data.bunked_last_class: score += 15
+
+    # 6. The Saviors
     if data.has_proxy: score -= 45
+    if data.is_first_period: score -= 10
+
+    # 7. Final Calculations
     final_risk = max(0, min(100, score))
     is_safe = final_risk < 50
+    
+    # Generate Message
+    reasons = []
+    if data.days_to_exam <= 3: reasons.append("Exam imminent")
+    if data.overall_attendance < 75: reasons.append("Low attendance")
+    if data.is_lab: reasons.append("Lab session")
+    if data.has_proxy: reasons.append("Proxy available")
+    
+    msg_text = ", ".join(reasons) if reasons else "Standard conditions"
+
     return {
         "prediction": "Safe to Bunk 😎" if is_safe else "Not Safe ❌",
-        "confidence": f"{100 - final_risk:.1f}%",
-        "message": "Calculated Risk."
+        "confidence": f"{100 - final_risk:.1f}%" if is_safe else f"{final_risk:.1f}% Risk",
+        "message": f"Calculated Risk: {int(final_risk)}%. {msg_text}."
     }
 
 @router.post("/", status_code=200)
 async def predict_risk(data: PredictionRequest, current_user: dict = Depends(get_current_user)):
     result = {}
     
-    # 1. Try Gemini (Auto-Selected)
+    # 1. Try Gemini
     try:
         model = genai.GenerativeModel(CURRENT_MODEL_NAME)
         prompt = f"""
@@ -73,12 +99,13 @@ async def predict_risk(data: PredictionRequest, current_user: dict = Depends(get
         Return JSON: {{ "prediction": "Safe/Not Safe", "confidence": "85%", "message": "Short reason" }}
         """
         response = model.generate_content(prompt)
-        result = json.loads(response.text.replace("```json", "").replace("```", "").strip())
+        clean_text = response.text.replace("```json", "").replace("```", "").strip()
+        result = json.loads(clean_text)
     except Exception:
         # Fallback to Vintage Math
         result = calculate_vintage_risk(data)
 
-    # 2. SAVE TO DATABASE (Keep this part!)
+    # 2. SAVE TO DATABASE
     try:
         username = current_user.get("username") or current_user.get("sub") or "unknown"
         history_log = {

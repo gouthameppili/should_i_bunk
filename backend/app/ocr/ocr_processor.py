@@ -1,49 +1,61 @@
 import google.generativeai as genai
 import os
+import json
 from io import BytesIO
 from PIL import Image
-from app.core.config import settings
 
-# Configure the API
-# We will grab the key from settings/env
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# 1. Setup API Key with explicit check
+api_key = os.getenv("GEMINI_API_KEY")
+if not api_key:
+    print("❌ CRITICAL: GEMINI_API_KEY is missing in environment variables!")
+else:
+    print(f"✅ Gemini API Key found (starts with {api_key[:4]}...)")
+    genai.configure(api_key=api_key)
 
 def extract_attendance_from_image(file_bytes: bytes):
+    # Default fallback data structure (Matches your probable Pydantic schema)
+    result_data = {
+        "overall_attendance": 0.0,
+        "subjects": [],
+        "raw_text": ""
+    }
+
     try:
-        # 1. Load image from bytes
+        # 2. Load Image
         image = Image.open(BytesIO(file_bytes))
-
-        # 2. Initialize Gemini Model (Lightweight 1.5 Flash)
-        model = genai.GenerativeModel('gemini-2.5-flash')
-
-        # 3. The Prompt - We ask Gemini to do the hard work
-        prompt = """
-        Analyze this image of an attendance record. 
-        Extract the following:
-        1. The Overall Attendance percentage (look for "Total", "Overall", or the main percentage).
-        2. A list of subject attendance percentages.
         
-        Return ONLY a JSON string like this:
-        {"overall_attendance": 85.5, "subjects": [80.0, 90.0, 75.5], "raw_text": "Summary of text..."}
+        # 3. Initialize Model (CORRECT NAME is 'gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash')
+
+        # 4. Prompt
+        prompt = """
+        Analyze this image. Extract attendance data.
+        Return raw JSON only. No markdown.
+        Keys: "overall_attendance" (float), "subjects" (list of floats), "raw_text" (string summary).
+        Example: {"overall_attendance": 85.5, "subjects": [80.0, 90.5], "raw_text": "Found total 85.5%"}
         """
 
-        # 4. Generate Content
+        # 5. Generate
+        print("⏳ Sending request to Gemini...")
         response = model.generate_content([prompt, image])
+        print("✅ Received response from Gemini.")
         
-        # 5. Parse the result (Simple cleaning)
-        # Gemini sometimes puts ```json ... ``` blocks, we clean them
-        text_response = response.text.replace("```json", "").replace("```", "").strip()
+        # 6. Clean & Parse
+        clean_text = response.text.replace("```json", "").replace("```", "").strip()
         
-        import json
-        data = json.loads(text_response)
-        
-        return data
+        try:
+            parsed_data = json.loads(clean_text)
+            # Update our result_data with what we found
+            result_data.update(parsed_data)
+        except json.JSONDecodeError:
+            print(f"⚠️ JSON Parse Error. Raw text: {clean_text}")
+            result_data["raw_text"] = f"Failed to parse JSON. Raw: {clean_text}"
 
     except Exception as e:
-        print(f"Gemini Error: {e}")
-        # Fallback if AI fails
-        return {
-            "raw_text": "Error processing image",
-            "overall_attendance": 0.0,
-            "subjects": []
-        }
+        # 7. Catch ALL errors so server doesn't crash
+        error_msg = f"🔥 AI Error: {str(e)}"
+        print(error_msg)
+        result_data["raw_text"] = error_msg
+    
+    # 8. Always return a dict that matches the expected schema
+    return result_data

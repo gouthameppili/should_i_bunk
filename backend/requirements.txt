@@ -9,12 +9,7 @@ passlib[bcrypt]
 bcrypt==3.2.2
 python-jose[cryptography]
 python-multipart
-scikit-learn
-xgboost
-pandas
-numpy
-easyocr
-pillow
+google-generativeai
 pytest
 httpx
-google-generativeai
+# REMOVE torch, easyocr, xgboost, pandas if possible to save RAM

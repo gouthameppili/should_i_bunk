@@ -1,5 +1,5 @@
 fastapi
-uvicorn[standard]
+uvicorn
 python-dotenv
 pymongo
 motor
@@ -12,4 +12,3 @@ python-multipart
 google-generativeai
 pytest
 httpx
-# REMOVE torch, easyocr, xgboost, pandas if possible to save RAM

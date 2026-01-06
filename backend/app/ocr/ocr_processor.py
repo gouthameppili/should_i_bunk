@@ -1,11 +1,10 @@
 import google.generativeai as genai
 import os
 import re
-import json
-import time
 from io import BytesIO
 from PIL import Image
 
+# Setup API
 api_key = os.getenv("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
@@ -15,51 +14,57 @@ def extract_attendance_from_image(file_bytes: bytes):
 
     try:
         image = Image.open(BytesIO(file_bytes))
+        
+        # Use Standard Flash (Reliable on Free Tier)
         model = genai.GenerativeModel('gemini-1.5-flash')
 
-        # 🟢 STRATEGY: Simple text dump. Don't ask for JSON.
-        prompt = "Read all the text in this image. Return it as plain text."
+        # 1. Ask for a simple text dump
+        prompt = "Read all the text in this image. Return it as plain text. Do not format it."
         
-        time.sleep(1)
         response = model.generate_content([prompt, image])
         text = response.text
         
-        # Log what Gemini actually sees (Check your Render logs for this!)
-        print(f"🔍 RAW OCR OUTPUT:\n{text}")
-
-        # 🟢 LOGIC 1: Look for the specific "TOTAL" row pattern
-        # Matches "TOTAL", then some numbers, then ends with a decimal number
-        # Example: "TOTAL 102 94 92.16"
-        total_lines = [line for line in text.split('\n') if "TOTAL" in line.upper()]
+        # 🟢 DEBUGGING: This will print EXACTLY what Gemini sees to your Render logs
+        print(f"\n🔍 GEMINI SAW THIS:\n{text}\n")
         
-        for line in total_lines:
-            # Remove symbols like '|' or '%'
-            clean_line = line.replace('|', '').replace('%', '').strip()
-            # Find all numbers in that line (e.g. ['102', '94', '92.16'])
-            numbers = re.findall(r"[\d\.]+", clean_line)
+        # 🟢 STRATEGY: The "Decimal Hunter"
+        # 1. Find where "TOTAL" starts
+        total_index = text.upper().find("TOTAL")
+        
+        if total_index != -1:
+            # 2. Slice the text to only look ATFER "TOTAL"
+            text_after_total = text[total_index:]
             
-            if numbers:
-                # The percentage is usually the LAST number
-                try:
-                    percent = float(numbers[-1])
-                    # Sanity check: Attendance is usually between 0 and 100
-                    if 0 <= percent <= 100:
-                        return {"overall_attendance": percent, "subjects": [], "raw_text": text}
-                except:
-                    continue
+            # 3. Find all decimal numbers (e.g., 92.16, 85.5) in that chunk
+            # The regex matches numbers that HAVE a dot
+            decimal_matches = re.findall(r"\b\d+\.\d+\b", text_after_total)
+            
+            if decimal_matches:
+                # The first decimal after "TOTAL" is usually the percentage
+                percent = float(decimal_matches[0])
+                
+                # Sanity check: Percentage must be 0-100
+                if 0 <= percent <= 100:
+                    print(f"✅ FOUND PERCENTAGE: {percent}")
+                    return {"overall_attendance": percent, "subjects": [], "raw_text": text}
 
-        # 🟢 LOGIC 2: Fallback - Look for "Overall" or "%" explicitly
-        # Matches "92.16 %" or "92.16%"
-        percent_match = re.search(r"(\d+\.?\d*)\s*%", text)
-        if percent_match:
-             return {"overall_attendance": float(percent_match.group(1)), "subjects": [], "raw_text": text}
+        # 🔴 FALLBACK: If "TOTAL" is missing, just hunt for the highest decimal number in the whole text
+        # (This helps if Gemini misses the word "TOTAL")
+        all_decimals = re.findall(r"\b\d+\.\d+\b", text)
+        valid_percentages = [float(x) for x in all_decimals if 50 <= float(x) <= 100]
+        
+        if valid_percentages:
+            # Take the largest value (assuming attendance is the main metric)
+            best_guess = max(valid_percentages)
+            print(f"⚠️ GUESSED PERCENTAGE: {best_guess}")
+            return {"overall_attendance": best_guess, "subjects": [], "raw_text": text}
 
-        # If we failed, return raw text so we can see it in the UI
-        result_data["raw_text"] = text
+        print("❌ NO PERCENTAGE FOUND")
         return result_data
 
     except Exception as e:
-        print(f"🔥 OCR Logic Error: {str(e)}")
+        print(f"🔥 OCR Error: {str(e)}")
+        # If rate limited, tell the frontend
         if "429" in str(e):
-             return {"overall_attendance": 0.0, "error": "Rate Limit. Wait 1 min."}
+             return {"overall_attendance": 0.0, "error": "Server Busy (Rate Limit)"}
         return result_data
